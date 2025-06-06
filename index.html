@@ -15,12 +15,12 @@
 
 
 
-
+<script>
 var smiles = "CC(=O)Oc1ccccc1C(=O)O";
   var mol = RDKitModule.get_mol(smiles);
   var dest = document.getElementById("example-1-output");
   var svg = mol.get_svg();
   dest.innerHTML = "<div id='drawing'>" + svg + "</div>";
-    
+    </script>
   </body>
 </html>
