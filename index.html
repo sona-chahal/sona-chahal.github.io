@@ -12,7 +12,12 @@
      <script src="RDKit_minimal.js"> </script>
 <p>Hello. now let's really try it! :D </p>
 
-
+  <script>
+    initRDKitModule().then(function (instance) {
+      RDKitModule = instance;
+      console.log("version: " + RDKitModule.version());
+    });
+  </script>
 
 <script>
 var smiles = "CC(=O)Oc1ccccc1C(=O)O";
