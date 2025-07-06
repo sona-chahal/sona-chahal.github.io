@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RDKit.js Test Page</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    #output { margin-top: 1em; }
+    #svg-container { margin-top: 1em; }
+    .error { color: red; }
+  </style>
+</head>
+<body>
+  <h1>RDKit.js Test</h1>
+  <p>This page loads <code>rdkit.js</code> from <a href="https://unpkg.com/rdkit/" target="_blank">unpkg.com</a>.</p>
+  <label for="smiles-input">SMILES:</label>
+  <input id="smiles-input" value="c1ccccc1O" size="30">
+  <button id="draw-btn">Draw Molecule</button>
+  <div id="output"></div>
+  <div id="svg-container"></div>
+
+  <!-- Load RDKit.js from unpkg -->
+  <script src="https://unpkg.com/rdkit/Code/MinimalLib/dist/RDKit_minimal.js"></script>
+  <script>
+    let RDKitModuleReady = false;
+
+    // Initialize RDKit
+    window.initRDKitModule().then(function(instance) {
+      window.RDKit = instance;
+      RDKitModuleReady = true;
+      document.getElementById('output').textContent = 'RDKit loaded!';
+    }).catch(function(err) {
+      document.getElementById('output').textContent = 'Failed to load RDKit: ' + err;
+      document.getElementById('output').className = 'error';
+    });
+
+    document.getElementById('draw-btn').onclick = function() {
+      const smiles = document.getElementById('smiles-input').value;
+      const output = document.getElementById('output');
+      const svgContainer = document.getElementById('svg-container');
+      svgContainer.innerHTML = '';
+      output.textContent = '';
+
+      if (!RDKitModuleReady) {
+        output.textContent = 'RDKit is not loaded yet. Please wait...';
+        output.className = 'error';
+        return;
+      }
+
+      try {
+        const mol = RDKit.get_mol(smiles);
+        if (!mol) {
+          output.textContent = 'Invalid SMILES or RDKit error.';
+          output.className = 'error';
+          return;
+        }
+        output.textContent = 'Molecule created!';
+        output.className = '';
+        const svg = mol.get_svg();
+        svgContainer.innerHTML = svg;
+        mol.delete();
+      } catch (e) {
+        output.textContent = 'Error: ' + e;
+        output.className = 'error';
+      }
+    };
+  </script>
+</body>
+</html>
