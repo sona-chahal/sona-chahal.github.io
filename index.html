@@ -5,14 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ABC Game for Babies</title>
   <style>
-    body {
+    html, body {
       margin: 0;
       background: #fffaf0;
       display: flex;
       align-items: center;
       justify-content: center;
-      touch-action: manipulation;
+      /* touch-action: manipulation; - Removed as we'll use JS for prevention */
       min-height: 100vh;
+      height: 100vh; /* Set explicit height for both html and body */
+      overflow: hidden; /* Hide scrollbars if content somehow overflows */
     }
     .grid {
       display: flex;
@@ -33,7 +35,6 @@
       box-shadow: 0 6px 10px rgba(0, 0, 0, 0.2);
       transition: transform 0.2s ease-in-out;
       user-select: none;
-      /* Added for image background */
       background-size: cover;
       background-position: center;
     }
@@ -80,13 +81,13 @@
   <script>
     let pressCount = 0;
     let transformedLetter = null;
-    let currentAudioPlaying = null; // Track the currently playing audio element
-    let lastAOption = 'anita'; // New variable to track the last 'a' option shown
+    let currentAudioPlaying = null;
+    let lastAOption = 'anita';
 
     const specialLetters = {
       a: {
         options: [
-          { displayType: "emoji", value: "🍎", audio: "apple" }, // Changed to emoji
+          { displayType: "emoji", value: "🍎", audio: "apple" },
           { displayType: "image", src: "Anita.jpg", audio: "anita" }
         ]
       },
@@ -103,8 +104,8 @@
       const audio = document.getElementById("audio-" + id);
       if (audio) {
         if (currentAudioPlaying) {
-          currentAudioPlaying.pause(); // Stop any currently playing audio
-          currentAudioPlaying.removeEventListener('ended', currentAudioPlaying.onendedCustom); // Remove custom listener
+          currentAudioPlaying.pause();
+          currentAudioPlaying.removeEventListener('ended', currentAudioPlaying.onendedCustom);
         }
         audio.currentTime = 0;
         audio.play();
@@ -112,10 +113,9 @@
         currentAudioPlaying = audio;
 
         if (onEndedCallback) {
-          audio.onendedCustom = onEndedCallback; // Store callback in a custom property
+          audio.onendedCustom = onEndedCallback;
           audio.addEventListener('ended', audio.onendedCustom);
         } else {
-          // Clear any previous onended listener if no new callback is provided
           audio.removeEventListener('ended', audio.onendedCustom);
           audio.onendedCustom = null;
         }
@@ -131,8 +131,8 @@
       const btn = document.getElementById("btn-" + letter);
       btn.innerText = letter.toUpperCase();
       btn.style.backgroundColor = "#f8bbd0";
-      btn.style.backgroundImage = "none"; // Remove image background
-      btn.style.color = "#4a148c"; // Reset color for text
+      btn.style.backgroundImage = "none";
+      btn.style.color = "#4a148c";
     }
 
     function showObject(letter) {
@@ -140,7 +140,6 @@
       let item;
 
       if (letter === 'a' && specialLetters.a.options) {
-        // For 'a', alternate between options
         if (lastAOption === 'anita') {
           item = specialLetters.a.options[0]; // apple emoji
           lastAOption = 'apple';
@@ -148,7 +147,6 @@
           item = specialLetters.a.options[1]; // Anita image
           lastAOption = 'anita';
         }
-        // Store the current 'a' item so playSound can use its audio
         specialLetters.a.current = item;
       } else {
         item = specialLetters[letter];
@@ -160,12 +158,12 @@
       if (item.displayType === "emoji") {
         btn.innerText = item.value;
         btn.style.backgroundImage = "none";
-        btn.style.color = "#4a148c"; // Ensure text color for emoji
-        btn.style.fontSize = "4em"; // Ensure emoji font size is correct
+        btn.style.color = "#4a148c";
+        btn.style.fontSize = "4em";
       } else if (item.displayType === "image") {
-        btn.innerText = ""; // Clear text for image
+        btn.innerText = "";
         btn.style.backgroundImage = `url(${item.src})`;
-        btn.style.color = "transparent"; // Hide text behind image
+        btn.style.color = "transparent";
       }
     }
 
@@ -174,7 +172,6 @@
 
       if (isTransformed) {
         let audioIdToPlay;
-        // If 'a' is transformed, play the audio of the currently displayed 'a' option
         if (letter === 'a' && specialLetters.a.current) {
             audioIdToPlay = specialLetters.a.current.audio;
         } else {
@@ -182,27 +179,31 @@
         }
 
         playSound(audioIdToPlay, el, () => {
-          // This callback runs AFTER the special object's sound has finished
           revertLetter(letter);
           pressCount = 0;
           transformedLetter = null;
-          currentAudioPlaying = null; // Clear tracking after revert
+          currentAudioPlaying = null;
         });
       } else {
-        // Play the letter's sound
         playSound(letter, el, () => {
-          // This callback runs AFTER the letter's sound has finished
-          if (!transformedLetter) { // Only change if not already transformed by another click
+          if (!transformedLetter) {
             pressCount++;
             if (pressCount >= 2) {
               showObject(letter);
-              pressCount = 0; // Reset press count after transformation
+              pressCount = 0;
             }
           }
-          currentAudioPlaying = null; // Clear tracking after regular letter sound
+          currentAudioPlaying = null;
         });
       }
     }
+
+    // --- New code for preventing touch scrolling ---
+    document.addEventListener('touchmove', function(event) {
+      event.preventDefault();
+    }, { passive: false }); // Use { passive: false } to ensure preventDefault works
+    // --- End new code ---
+
   </script>
 </body>
 </html>
