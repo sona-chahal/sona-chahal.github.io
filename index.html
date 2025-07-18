@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ABC Game for Babies</title>
+  <style>
+    body {
+      margin: 0;
+      background: #fffaf0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: manipulation;
+      min-height: 100vh;
+    }
+    .grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 30px;
+      padding: 30px;
+    }
+    .letter {
+      width: 140px;
+      height: 140px;
+      background: #f8bbd0;
+      color: #4a148c;
+      font-size: 4em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 30px;
+      box-shadow: 0 6px 10px rgba(0, 0, 0, 0.2);
+      transition: transform 0.2s ease-in-out;
+      user-select: none;
+      /* Added for image background */
+      background-size: cover;
+      background-position: center;
+    }
+    .letter.animate {
+      animation: bounce 0.4s ease-in-out;
+    }
+    @keyframes bounce {
+      0% { transform: scale(1); }
+      30% { transform: scale(1.15); }
+      60% { transform: scale(0.95); }
+      100% { transform: scale(1); }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    <div class="letter" id="btn-a" onclick="handleLetter(this, 'a')">A</div>
+    <div class="letter" id="btn-b" onclick="handleLetter(this, 'b')">B</div>
+    <div class="letter" id="btn-c" onclick="handleLetter(this, 'c')">C</div>
+    <div class="letter" id="btn-d" onclick="handleLetter(this, 'd')">D</div>
+    <div class="letter" id="btn-e" onclick="handleLetter(this, 'e')">E</div>
+    <div class="letter" id="btn-f" onclick="handleLetter(this, 'f')">F</div>
+    <div class="letter" id="btn-g" onclick="handleLetter(this, 'g')">G</div>
+    <div class="letter" id="btn-h" onclick="handleLetter(this, 'h')">H</div>
+  </div>
+
+  <audio id="audio-a" src="a.mp3"></audio>
+  <audio id="audio-b" src="b.mp3"></audio>
+  <audio id="audio-c" src="c.mp3"></audio>
+  <audio id="audio-d" src="d.mp3"></audio>
+  <audio id="audio-e" src="e.mp3"></audio>
+  <audio id="audio-f" src="f.mp3"></audio>
+  <audio id="audio-g" src="g.mp3"></audio>
+  <audio id="audio-h" src="h.mp3"></audio>
+  <audio id="audio-apple" src="apple.mp3"></audio>
+  <audio id="audio-banana" src="banana.mp3"></audio>
+  <audio id="audio-car" src="car.mp3"></audio>
+  <audio id="audio-duck" src="duck.mp3"></audio>
+  <audio id="audio-ear" src="ear.mp3"></audio>
+  <audio id="audio-foot" src="foot.mp3"></audio>
+  <audio id="audio-goat" src="goat.mp3"></audio>
+  <audio id="audio-hat" src="hat.mp3"></audio>
+  <audio id="audio-anita" src="Anita.mp3"></audio> <script>
+    let pressCount = 0;
+    let transformedLetter = null;
+
+    const specialLetters = {
+      a: { displayType: "image", src: "Anita.jpg", audio: "anita" }, // Updated for 'A'
+      b: { displayType: "emoji", value: "🍌", audio: "banana" },
+      c: { displayType: "emoji", value: "🚗", audio: "car" },
+      d: { displayType: "emoji", value: "🐤", audio: "duck" },
+      e: { displayType: "emoji", value: "👂", audio: "ear" },
+      f: { displayType: "emoji", value: "🦶", audio: "foot" },
+      g: { displayType: "emoji", value: "🐐", audio: "goat" },
+      h: { displayType: "emoji", value: "🎩", audio: "hat" },
+    };
+
+    function playSound(id, el) {
+      const audio = document.getElementById("audio-" + id);
+      if (audio) {
+        audio.currentTime = 0;
+        audio.play();
+        animate(el);
+      }
+    }
+
+    function animate(el) {
+      el.classList.add('animate');
+      setTimeout(() => el.classList.remove('animate'), 400);
+    }
+
+    function revertLetter(letter) {
+      const btn = document.getElementById("btn-" + letter);
+      btn.innerText = letter.toUpperCase();
+      btn.style.backgroundColor = "#f8bbd0";
+      btn.style.backgroundImage = "none"; // Remove image background
+      btn.style.color = "#4a148c"; // Reset color for text
+    }
+
+    function showObject(letter) {
+      const btn = document.getElementById("btn-" + letter);
+      const item = specialLetters[letter];
+      btn.style.backgroundColor = "#ffe082";
+      transformedLetter = letter;
+
+      if (item.displayType === "emoji") {
+        btn.innerText = item.value;
+        btn.style.backgroundImage = "none";
+        btn.style.color = "#4a148c"; // Ensure text color for emoji
+      } else if (item.displayType === "image") {
+        btn.innerText = ""; // Clear text for image
+        btn.style.backgroundImage = `url(${item.src})`;
+        btn.style.color = "transparent"; // Hide text behind image
+      }
+    }
+
+    async function handleLetter(el, letter) {
+      const isTransformed = transformedLetter === letter;
+
+      if (isTransformed) {
+        playSound(specialLetters[letter].audio, el);
+        revertLetter(letter);
+        pressCount = 0;
+        transformedLetter = null;
+        return;
+      }
+
+      playSound(letter, el);
+      if (transformedLetter) return;
+
+      pressCount++;
+      if (pressCount >= 2) { // Now triggers after 2 presses
+        let keys = Object.keys(specialLetters);
+        let choice = keys[Math.floor(Math.random() * keys.length)];
+        showObject(choice);
+      }
+    }
+  </script>
+</body>
+</html>
