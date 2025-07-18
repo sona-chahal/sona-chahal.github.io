@@ -76,12 +76,20 @@
   <audio id="audio-foot" src="foot.mp3"></audio>
   <audio id="audio-goat" src="goat.mp3"></audio>
   <audio id="audio-hat" src="hat.mp3"></audio>
-  <audio id="audio-anita" src="Anita.mp3"></audio> <script>
+  <audio id="audio-anita" src="Anita.mp3"></audio>
+  <script>
     let pressCount = 0;
     let transformedLetter = null;
+    let currentAudioPlaying = null; // Track the currently playing audio element
+    let lastAOption = 'anita'; // New variable to track the last 'a' option shown
 
     const specialLetters = {
-      a: { displayType: "image", src: "Anita.jpg", audio: "anita" }, // Updated for 'A'
+      a: {
+        options: [
+          { displayType: "emoji", value: "🍎", audio: "apple" }, // Changed to emoji
+          { displayType: "image", src: "Anita.jpg", audio: "anita" }
+        ]
+      },
       b: { displayType: "emoji", value: "🍌", audio: "banana" },
       c: { displayType: "emoji", value: "🚗", audio: "car" },
       d: { displayType: "emoji", value: "🐤", audio: "duck" },
@@ -91,12 +99,26 @@
       h: { displayType: "emoji", value: "🎩", audio: "hat" },
     };
 
-    function playSound(id, el) {
+    function playSound(id, el, onEndedCallback = null) {
       const audio = document.getElementById("audio-" + id);
       if (audio) {
+        if (currentAudioPlaying) {
+          currentAudioPlaying.pause(); // Stop any currently playing audio
+          currentAudioPlaying.removeEventListener('ended', currentAudioPlaying.onendedCustom); // Remove custom listener
+        }
         audio.currentTime = 0;
         audio.play();
         animate(el);
+        currentAudioPlaying = audio;
+
+        if (onEndedCallback) {
+          audio.onendedCustom = onEndedCallback; // Store callback in a custom property
+          audio.addEventListener('ended', audio.onendedCustom);
+        } else {
+          // Clear any previous onended listener if no new callback is provided
+          audio.removeEventListener('ended', audio.onendedCustom);
+          audio.onendedCustom = null;
+        }
       }
     }
 
@@ -115,7 +137,23 @@
 
     function showObject(letter) {
       const btn = document.getElementById("btn-" + letter);
-      const item = specialLetters[letter];
+      let item;
+
+      if (letter === 'a' && specialLetters.a.options) {
+        // For 'a', alternate between options
+        if (lastAOption === 'anita') {
+          item = specialLetters.a.options[0]; // apple emoji
+          lastAOption = 'apple';
+        } else {
+          item = specialLetters.a.options[1]; // Anita image
+          lastAOption = 'anita';
+        }
+        // Store the current 'a' item so playSound can use its audio
+        specialLetters.a.current = item;
+      } else {
+        item = specialLetters[letter];
+      }
+
       btn.style.backgroundColor = "#ffe082";
       transformedLetter = letter;
 
@@ -123,6 +161,7 @@
         btn.innerText = item.value;
         btn.style.backgroundImage = "none";
         btn.style.color = "#4a148c"; // Ensure text color for emoji
+        btn.style.fontSize = "4em"; // Ensure emoji font size is correct
       } else if (item.displayType === "image") {
         btn.innerText = ""; // Clear text for image
         btn.style.backgroundImage = `url(${item.src})`;
@@ -134,21 +173,34 @@
       const isTransformed = transformedLetter === letter;
 
       if (isTransformed) {
-        playSound(specialLetters[letter].audio, el);
-        revertLetter(letter);
-        pressCount = 0;
-        transformedLetter = null;
-        return;
-      }
+        let audioIdToPlay;
+        // If 'a' is transformed, play the audio of the currently displayed 'a' option
+        if (letter === 'a' && specialLetters.a.current) {
+            audioIdToPlay = specialLetters.a.current.audio;
+        } else {
+            audioIdToPlay = specialLetters[letter].audio;
+        }
 
-      playSound(letter, el);
-      if (transformedLetter) return;
-
-      pressCount++;
-      if (pressCount >= 2) { // Now triggers after 2 presses
-        let keys = Object.keys(specialLetters);
-        let choice = keys[Math.floor(Math.random() * keys.length)];
-        showObject(choice);
+        playSound(audioIdToPlay, el, () => {
+          // This callback runs AFTER the special object's sound has finished
+          revertLetter(letter);
+          pressCount = 0;
+          transformedLetter = null;
+          currentAudioPlaying = null; // Clear tracking after revert
+        });
+      } else {
+        // Play the letter's sound
+        playSound(letter, el, () => {
+          // This callback runs AFTER the letter's sound has finished
+          if (!transformedLetter) { // Only change if not already transformed by another click
+            pressCount++;
+            if (pressCount >= 2) {
+              showObject(letter);
+              pressCount = 0; // Reset press count after transformation
+            }
+          }
+          currentAudioPlaying = null; // Clear tracking after regular letter sound
+        });
       }
     }
   </script>
