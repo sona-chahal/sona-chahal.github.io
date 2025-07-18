@@ -11,10 +11,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      /* touch-action: manipulation; - Removed as we'll use JS for prevention */
       min-height: 100vh;
-      height: 100vh; /* Set explicit height for both html and body */
-      overflow: hidden; /* Hide scrollbars if content somehow overflows */
+      height: 100vh;
+      overflow: hidden;
     }
     .grid {
       display: flex;
@@ -83,6 +82,7 @@
     let transformedLetter = null;
     let currentAudioPlaying = null;
     let lastAOption = 'anita';
+    let isAudioBusy = false; // New flag to track audio state
 
     const specialLetters = {
       a: {
@@ -101,24 +101,38 @@
     };
 
     function playSound(id, el, onEndedCallback = null) {
+      if (isAudioBusy) { // Prevent new sounds if busy
+        return;
+      }
+
       const audio = document.getElementById("audio-" + id);
       if (audio) {
-        if (currentAudioPlaying) {
-          currentAudioPlaying.pause();
-          currentAudioPlaying.removeEventListener('ended', currentAudioPlaying.onendedCustom);
-        }
+        // No need to stop previous audio if we're using isAudioBusy to prevent new plays
+        // if (currentAudioPlaying) {
+        //   currentAudioPlaying.pause();
+        //   currentAudioPlaying.removeEventListener('ended', currentAudioPlaying.onendedCustom);
+        // }
+
         audio.currentTime = 0;
         audio.play();
         animate(el);
         currentAudioPlaying = audio;
+        isAudioBusy = true; // Set busy state
 
-        if (onEndedCallback) {
-          audio.onendedCustom = onEndedCallback;
-          audio.addEventListener('ended', audio.onendedCustom);
-        } else {
-          audio.removeEventListener('ended', audio.onendedCustom);
-          audio.onendedCustom = null;
-        }
+        // Define the custom onended handler
+        const handleAudioEnded = () => {
+            if (onEndedCallback) {
+                onEndedCallback();
+            }
+            isAudioBusy = false; // Release busy state when audio ends
+            currentAudioPlaying = null; // Clear current audio reference
+            audio.removeEventListener('ended', handleAudioEnded); // Remove self-listener
+            audio.onendedCustom = null; // Clear custom property
+        };
+
+        // Attach the custom handler
+        audio.onendedCustom = handleAudioEnded;
+        audio.addEventListener('ended', audio.onendedCustom);
       }
     }
 
@@ -141,10 +155,10 @@
 
       if (letter === 'a' && specialLetters.a.options) {
         if (lastAOption === 'anita') {
-          item = specialLetters.a.options[0]; // apple emoji
+          item = specialLetters.a.options[0];
           lastAOption = 'apple';
         } else {
-          item = specialLetters.a.options[1]; // Anita image
+          item = specialLetters.a.options[1];
           lastAOption = 'anita';
         }
         specialLetters.a.current = item;
@@ -168,6 +182,11 @@
     }
 
     async function handleLetter(el, letter) {
+      // If audio is busy, ignore the touch event
+      if (isAudioBusy) {
+        return;
+      }
+
       const isTransformed = transformedLetter === letter;
 
       if (isTransformed) {
@@ -182,7 +201,7 @@
           revertLetter(letter);
           pressCount = 0;
           transformedLetter = null;
-          currentAudioPlaying = null;
+          // isAudioBusy is reset within playSound's ended handler
         });
       } else {
         playSound(letter, el, () => {
@@ -193,17 +212,15 @@
               pressCount = 0;
             }
           }
-          currentAudioPlaying = null;
+          // isAudioBusy is reset within playSound's ended handler
         });
       }
     }
 
-    // --- New code for preventing touch scrolling ---
+    // Prevent screen scrolling
     document.addEventListener('touchmove', function(event) {
       event.preventDefault();
-    }, { passive: false }); // Use { passive: false } to ensure preventDefault works
-    // --- End new code ---
-
+    }, { passive: false });
   </script>
 </body>
 </html>
