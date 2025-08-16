@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Puppy Frolic & Feed — Deluxe</title>
+<style>
+  html, body { margin:0; padding:0; background:#f4fbff; height:100%; overflow:hidden; }
+  canvas { display:block; touch-action:none; }
+  .rotate {
+    position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    font:700 20px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:#234;
+    background:rgba(255,255,255,0.85); text-align:center; padding:24px;
+  }
+  .hud {
+    position:fixed; left:0; right:0; top:0; display:flex; gap:8px; justify-content:space-between;
+    align-items:center; padding:10px 14px; font:600 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    color:#123; pointer-events:none; mix-blend-mode:multiply;
+  }
+  .hud .left, .hud .right { display:flex; gap:8px; align-items:center; }
+  .pill { background:#ffffffcc; padding:6px 10px; border-radius:999px; box-shadow:0 2px 6px rgba(0,0,0,0.06); pointer-events:auto; user-select:none; }
+  .btn { cursor:pointer; }
+  .hint {
+    position:fixed; bottom:10px; left:0; right:0; text-align:center; pointer-events:none;
+    font:600 13px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Arial; color:#245;
+  }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="left">
+    <div class="pill" id="leftLabel">🐶 Tap LEFT when ready</div>
+    <div class="pill btn" id="muteBtn" title="Toggle sound">🔊</div>
+  </div>
+  <div class="right">
+    <div class="pill" id="rightLabel">🍲 RIGHT to set bowls: 0</div>
+  </div>
+</div>
+<div class="hint">Goal: Set bowls to match puppies, then tap LEFT. Puppies will turn, frolic, and eat!</div>
+<div class="rotate" id="rotate">Please rotate your device to landscape<br>↺</div>
+<canvas id="c"></canvas>
+
+<script>
+/* ====================== Utility & Setup ====================== */
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+function fitCanvas() {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+fitCanvas();
+window.addEventListener('resize', ()=>{ fitCanvas(); layout(); });
+
+const rotateOverlay = document.getElementById('rotate');
+function checkOrientation() {
+  const landscape = window.innerWidth >= window.innerHeight;
+  rotateOverlay.style.display = landscape ? 'none' : 'flex';
+}
+checkOrientation();
+window.addEventListener('resize', checkOrientation);
+
+const leftLabel = document.getElementById('leftLabel');
+const rightLabel = document.getElementById('rightLabel');
+const muteBtn = document.getElementById('muteBtn');
+
+/* ====================== Simple Audio (Squeaky Bark) ====================== */
+let audioReady = false;
+let muted = false;
+let AC = null;
+function ensureAudioCtx() {
+  if (audioReady) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    audioReady = true;
+  } catch(e){}
+}
+function squeakBark() {
+  if (!audioReady || muted) return;
+  const now = AC.currentTime;
+  // Two short sine blips (gliss), with a soft noise "puff"
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(680, now);
+  o.frequency.exponentialRampToValueAtTime(920, now + 0.06);
+  o.frequency.exponentialRampToValueAtTime(540, now + 0.12);
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.25, now + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+  o.connect(g).connect(AC.destination);
+  o.start(now);
+  o.stop(now + 0.16);
+
+  // Little noise puff
+  const bufferSize = 2048;
+  const noise = AC.createScriptProcessor ? AC.createScriptProcessor(bufferSize, 1, 1)
+                                         : AC.createGain(); // fallback (no noise)
+  if (noise.context.createScriptProcessor) {
+    const ng = AC.createGain();
+    ng.gain.setValueAtTime(0.04, now);
+    ng.gain.linearRampToValueAtTime(0.0, now + 0.08);
+    noise.onaudioprocess = function(e) {
+      const out = e.outputBuffer.getChannelData(0);
+      for (let i=0;i<bufferSize;i++) out[i] = (Math.random()*2-1)*0.6;
+    };
+    noise.connect(ng).connect(AC.destination);
+    setTimeout(()=>{ noise.disconnect(); }, 120);
+  }
+}
+muteBtn.addEventListener('click', ()=>{
+  ensureAudioCtx();
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+});
+
+/* ====================== Game State ====================== */
+const STATE = {
+  WAITING: 'waiting',
+  TURNING: 'turning',
+  FROLIC:  'frolic',
+  EATING:  'eating',
+  HAPPY:   'happy'
+};
+let state = STATE.WAITING;
+
+let puppies = [];
+let bowls = [];
+let desiredBowlCount = 0; // cycles 0..5 with right-half taps
+let time = 0;    // seconds
+let dt = 0;      // seconds/frame
+let lastTs = performance.now();
+
+/* Layout (left/right halves) */
+let L = { x:0, y:0, w:0, h:0 }; // left half
+let R = { x:0, y:0, w:0, h:0 }; // right half
+function layout() {
+  const W = window.innerWidth, H = window.innerHeight;
+  L.x = 0; L.y = 0; L.w = Math.floor(W * 0.5); L.h = H;
+  R.x = L.w; R.y = 0; R.w = W - L.w; R.h = H;
+}
+layout();
+
+/* ====================== Random Helpers ====================== */
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randi(min, max) { return Math.floor(rand(min, max+1)); }
+function choice(arr){ return arr[(Math.random()*arr.length)|0]; }
+
+/* ====================== Bowl ====================== */
+class Bowl {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.food = 1.0; // 1 full, 0 empty
+  }
+  resetFood(){ this.food = 1.0; }
+  draw() {
+    const x = this.x, y = this.y;
+    // shadow
+    ctx.globalAlpha = 0.12;
+    ctx.beginPath(); ctx.ellipse(x, y+12, 46, 10, 0, 0, Math.PI*2); ctx.fillStyle = '#000'; ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // bowl base
+    ctx.fillStyle = '#7a8aa6';
+    ctx.beginPath(); ctx.ellipse(x, y, 52, 22, 0, 0, Math.PI*2); ctx.fill();
+
+    // rim highlight
+    ctx.strokeStyle = '#9fb1d3'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(x, y-2, 48, 18, 0, 0, Math.PI*2); ctx.stroke();
+
+    // food (heaped ellipse), level based on this.food
+    if (this.food > 0.02) {
+      const lvl = Math.max(0, this.food);
+      ctx.fillStyle = '#8b4b2c'; // kibble mound
+      ctx.beginPath();
+      ctx.ellipse(x, y-6, 42, 14 * (0.25 + 0.75 * lvl), 0, 0, Math.PI*2);
+      ctx.fill();
+      // kibble texture dots
+      ctx.globalAlpha = 0.25;
+      for (let i=0;i<12;i++){
+        const kx = x + rand(-24,24), ky = y-6 + rand(-8,8)*(0.25 + 0.75 * lvl);
+        ctx.beginPath(); ctx.arc(kx, ky, rand(0.7,1.5), 0, Math.PI*2); ctx.fillStyle = '#4b2a19'; ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+/* ====================== Puppy ====================== */
+const palettes = [
+  // body, ear, spot, nose, collar, tag
+  { body:'#c78f5a', ear:'#b47844', spot:'#5b3c24', nose:'#2b1b14', collar:'#3d6df2', tag:'#ffd45c' },
+  { body:'#f6d7a8', ear:'#e8be83', spot:'#8e6a49', nose:'#2e2e2e', collar:'#e23d52', tag:'#ffe089' },
+  { body:'#cfcde0', ear:'#b1afc9', spot:'#6a6a8a', nose:'#222233', collar:'#32a86d', tag:'#ffe089' },
+  { body:'#a5c79b', ear:'#8bb081', spot:'#4e6a4a', nose:'#1c2a1d', collar:'#c03df2', tag:'#ffd45c' },
+  { body:'#f5b3b3', ear:'#e19494', spot:'#7a4a4a', nose:'#2b1a1a', collar:'#ff8a3d', tag:'#fff1a8' }
+];
+
+class Puppy {
+  constructor(laneIdx, lanes) {
+    this.laneIdx = laneIdx;
+    this.lanes = lanes;
+
+    this.palette = palettes[laneIdx % palettes.length];
+    this.scale = rand(0.78, 1.05);
+    this.flip = 1;           // 1 face right, -1 left
+    this.t = 0;
+
+    const laneY = this.lanes[laneIdx];
+    this.x = rand(L.x + 40, L.x + L.w * 0.45);
+    this.y = laneY;
+
+    this.tx = this.x;
+    this.ty = this.y;
+
+    // gait phases
+    const base = rand(0, Math.PI*2);
+    this.legs = [
+      { upper:0, lower:0, phase: base + 0.0,   footDown:false }, // front near
+      { upper:0, lower:0, phase: base + Math.PI, footDown:false }, // front far
+      { upper:0, lower:0, phase: base + Math.PI, footDown:false }, // rear near
+      { upper:0, lower:0, phase: base + 0.0,   footDown:false }, // rear far
+    ];
+
+    this.earStyle = choice(['flop','point','mix']);
+    this.tailStyle = choice(['curl','waggy']);
+    this.spots = [];
+    const spotCount = randi(0, 3);
+    for (let i=0;i<spotCount;i++){
+      this.spots.push({ ox: rand(-26,18), oy: rand(-10,12), r: rand(4,9) });
+    }
+
+    this.turn = 0;
+    this.eating = false;
+
+    // collar jiggle state (for swinging tag)
+    this.collarPhase = rand(0, Math.PI*2);
+    this.tagSwing = 0; // radians
+  }
+
+  setTargetForBowl(bowl) {
+    this.tx = bowl.x - 62;
+    this.ty = bowl.y + rand(-6, 6);
+  }
+
+  update(dt, globalState) {
+    this.t += dt;
+
+    if (globalState === STATE.TURNING) {
+      this.flip = 1;
+      this.turn = Math.min(1, this.turn + dt * 2);
+    }
+
+    if (globalState === STATE.FROLIC) {
+      const speed = 180;
+      const dx = this.tx - this.x;
+      const dy = this.ty - this.y;
+      const dist = Math.hypot(dx, dy);
+      const maxStep = speed * dt;
+      if (dist > 1) {
+        const k = Math.min(1, maxStep / dist);
+        this.x += dx * k;
+        this.y += dy * k;
+
+        // playful bob + occasional hop
+        const hop = Math.sin(this.t * 8 + this.laneIdx) * 3 + (Math.sin(this.t * 2 + this.laneIdx*1.7) > 0.94 ? 6 : 0);
+        this._bob = hop;
+
+        // legs cycle (trotty)
+        for (let i=0;i<4;i++){
+          const leg = this.legs[i];
+          const prev = Math.sin((this.t - dt)*9 + leg.phase);
+          const cycle = Math.sin(this.t*9 + leg.phase);
+          leg.upper = cycle * 0.65;
+          leg.lower = Math.max(-0.6, -cycle * 0.9);
+
+          // detect front paw "footfalls" for squeak (only front near (index 0))
+          if (i===0) {
+            const goingDown = prev > 0 && cycle <= 0; // crossing downward
+            if (goingDown) squeakBark();
+          }
+        }
+
+        // collar swing increases with speed
+        this.tagSwing = Math.sin(this.t*16) * 0.3;
+      } else {
+        this.eating = true;
+      }
+    }
+
+    if (globalState === STATE.EATING) {
+      this._bob = Math.sin(this.t*10) * 1.5;
+      this.tagSwing = Math.sin(this.t*12) * 0.15;
+      for (let i=0;i<4;i++){
+        const leg = this.legs[i];
+        leg.upper = 0.2*Math.sin(this.t*12 + i);
+        leg.lower = -0.2*Math.sin(this.t*13 + i*0.5);
+      }
+    }
+
+    if (globalState === STATE.HAPPY) {
+      this._bob = Math.abs(Math.sin(this.t*8)) * 5 + 2;
+      this.tagSwing = Math.sin(this.t*18) * 0.4;
+      for (let i=0;i<4;i++){
+        const leg = this.legs[i];
+        leg.upper = 0.5*Math.sin(this.t*14 + i);
+        leg.lower = -0.6*Math.sin(this.t*12 + i*0.8);
+      }
+    }
+  }
+
+  draw() {
+    const s = this.scale;
+    const x = this.x, y = this.y + (this._bob||0);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(this.flip, 1);
+    const turnTilt = (this.turn||0) * 0.08;
+    ctx.rotate(turnTilt);
+
+    // shadow
+    ctx.globalAlpha = 0.14;
+    ctx.beginPath(); ctx.ellipse(0, 32, 60*s, 12*s, 0, 0, Math.PI*2); ctx.fillStyle = '#000'; ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // BODY
+    ctx.fillStyle = this.palette.body;
+    roundedBean(0, 0, 86*s, 46*s, 16*s);
+    ctx.fill();
+
+    // SPOTS
+    ctx.fillStyle = this.palette.spot;
+    this.spots.forEach(sp=>{
+      ctx.beginPath(); ctx.ellipse(sp.ox*s, (sp.oy-2)*s, sp.r*s*1.3, sp.r*s, 0, 0, Math.PI*2); ctx.fill();
+    });
+
+    // TAIL
+    ctx.strokeStyle = this.palette.body; ctx.lineWidth = 8*s; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (this.tailStyle==='curl') {
+      const wag = Math.sin(this.t*18)*0.45;
+      arcTail(-40*s, -10*s, 28*s, Math.PI*0.4+wag, Math.PI*1.2+wag);
+    } else {
+      const wagY = Math.sin(this.t*22)*9*s;
+      ctx.moveTo(-42*s, -6*s);
+      ctx.quadraticCurveTo(-58*s, -12*s + wagY, -70*s, -4*s + wagY*0.6);
+    }
+    ctx.stroke();
+
+    // LEGS (rear far, front far, rear near, front near)
+    const legOrder = [1,3,2,0];
+    legOrder.forEach(i=>{
+      const up = this.legs[i].upper, lo = this.legs[i].lower;
+      const isFront = (i===0 || i===1);
+      const baseX = isFront ? 24*s : -16*s;
+      const baseY = 18*s;
+      drawLegWithPads(baseX, baseY, up, lo, s, this.palette.body);
+    });
+
+    // COLLAR + TAG (jiggle)
+    const collarY = -2*s;
+    ctx.save();
+    ctx.translate(18*s, collarY);
+    // collar band
+    ctx.strokeStyle = this.palette.collar; ctx.lineWidth = 6*s; ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(-2*s, 0);
+    ctx.quadraticCurveTo(12*s, 4*s, 26*s, 0);
+    ctx.stroke();
+    // tag string + tag (swing)
+    ctx.save();
+    ctx.translate(26*s, 0);
+    ctx.rotate(this.tagSwing);
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5*s;
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0, 10*s); ctx.stroke();
+    ctx.fillStyle = this.palette.tag;
+    ctx.beginPath(); ctx.ellipse(0, 16*s, 6*s, 6*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.restore();
+
+    // NECK + HEAD
+    ctx.save();
+    ctx.translate(38*s, -6*s);
+    ctx.rotate( -0.05 + Math.sin(this.t*6 + this.laneIdx)*0.03 );
+    // neck
+    ctx.fillStyle = this.palette.body;
+    roundedBean(0, 0, 26*s, 20*s, 8*s);
+    ctx.fill();
+
+    // head
+    ctx.save();
+    ctx.translate(18*s, -8*s + Math.sin(this.t*8)*1.0*s);
+    roundedEllipse(0, 0, 36*s, 30*s, 14*s, this.palette.body);
+
+    // ears
+    ctx.fillStyle = this.palette.ear;
+    drawEar(-4*s, -20*s, s, this.earStyle==='point' || this.earStyle==='mix'? 'point':'flop', this.t);
+    drawEar(14*s, -22*s, s, this.earStyle==='flop'  || this.earStyle==='mix'? 'flop':'point', this.t+0.7);
+
+    // snout base
+    ctx.fillStyle = this.palette.body;
+    roundedEllipse(20*s, 6*s, 22*s, 16*s, 8*s, this.palette.body);
+
+    // nose
+    ctx.fillStyle = this.palette.nose;
+    ctx.beginPath(); ctx.ellipse(30*s, 4*s, 4.5*s, 3*s, 0, 0, Math.PI*2); ctx.fill();
+
+    // floppy JOWLS (cute wobble, stronger when frolicking)
+    const wob = Math.sin(this.t*12) * 2.2*s;
+    ctx.fillStyle = this.palette.body;
+    roundedEllipse(18*s, 10*s + wob, 9*s, 6*s, 3*s, this.palette.body);
+    roundedEllipse(24*s, 12*s - wob, 9*s, 6*s, 3*s, this.palette.body);
+
+    // mouth line
+    ctx.strokeStyle = '#2b1b14'; ctx.lineWidth = 1.6*s; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(24*s, 10*s); ctx.quadraticCurveTo(28*s, 16*s, 22*s, 16*s); ctx.stroke();
+
+    // tongue if eating
+    if (this.eating) {
+      const tongueLen = 9*s + Math.sin(this.t*18)*1.3*s;
+      ctx.fillStyle = '#f69aa6';
+      ctx.beginPath(); ctx.ellipse(22*s, (16+tongueLen)*s/2, 5*s, tongueLen*0.55, 0, 0, Math.PI*2); ctx.fill();
+    }
+
+    // eyes + blink
+    const blink = (Math.sin(this.t*3 + this.laneIdx*1.1) > 0.95) ? 0.1 : 1;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(10*s, -6*s, 5*s, 5*s*blink, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(10*s, -6*s, 2.2*s, 0, Math.PI*2); ctx.fill();
+
+    // brows
+    ctx.strokeStyle = '#2b1b14'; ctx.lineWidth = 1.2*s;
+    ctx.beginPath(); ctx.moveTo(5*s, -12*s); ctx.quadraticCurveTo(10*s, -16*s - Math.sin(this.t*6)*2*s, 15*s, -12*s); ctx.stroke();
+
+    ctx.restore(); // head
+    ctx.restore(); // neck+head
+
+    ctx.restore(); // root
+  }
+}
+
+/* Drawing helpers */
+function roundedBean(cx, cy, w, h, r){
+  const rx = w/2, ry = h/2;
+  ctx.beginPath();
+  ctx.moveTo(cx-rx+r, cy-ry);
+  ctx.arcTo(cx+rx, cy-ry, cx+rx, cy+ry, r);
+  ctx.arcTo(cx+rx, cy+ry, cx-rx, cy+ry, r);
+  ctx.arcTo(cx-rx, cy+ry, cx-rx, cy-ry, r);
+  ctx.arcTo(cx-rx, cy-ry, cx+rx, cy-ry, r);
+}
+function roundedEllipse(cx, cy, w, h, r, fillStyle){
+  ctx.save(); ctx.translate(cx, cy);
+  ctx.beginPath(); ctx.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);
+  ctx.fillStyle = fillStyle; ctx.fill();
+  ctx.restore();
+}
+function drawLegWithPads(bx, by, upperA, lowerA, s, color){
+  ctx.save();
+  ctx.translate(bx, by);
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+
+  // upper
+  ctx.save();
+  ctx.rotate(upperA);
+  ctx.lineWidth = 8*s;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0, 18*s); ctx.stroke();
+
+  // lower
+  ctx.translate(0, 18*s);
+  ctx.rotate(lowerA);
+  ctx.lineWidth = 7*s;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0, 16*s); ctx.stroke();
+
+  // paw with pads
+  const pawY = 20*s;
+  ctx.lineWidth = 6*s;
+  ctx.beginPath(); ctx.moveTo(0, 16*s); ctx.lineTo(0, pawY); ctx.stroke();
+
+  // pads (heel + 3 toes)
+  ctx.fillStyle = '#3a2a24';
+  ctx.save();
+  ctx.translate(0, pawY);
+  ctx.beginPath(); ctx.ellipse(0, 2*s, 5*s, 3*s, 0, 0, Math.PI*2); ctx.fill(); // heel
+  for (let i=-1;i<=1;i++){
+    ctx.beginPath(); ctx.ellipse(i*4*s, -2*s, 2.2*s, 1.6*s, 0, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.restore(); // inner
+  ctx.restore();
+}
+function drawEar(ex, ey, s, style, t){
+  ctx.save();
+  ctx.translate(ex, ey);
+  const flap = Math.sin(t*8)*0.18;
+  ctx.rotate(style==='flop'? flap : flap*0.4);
+  ctx.beginPath();
+  if (style==='point'){
+    ctx.moveTo(0,0); ctx.quadraticCurveTo(6*s,-14*s, 0,-22*s);
+    ctx.quadraticCurveTo(-6*s,-14*s, 0,0); ctx.closePath();
+  } else {
+    ctx.moveTo(0,0); ctx.quadraticCurveTo(-4*s, 10*s, 0, 16*s);
+    ctx.quadraticCurveTo(6*s, 10*s, 0,0); ctx.closePath();
+  }
+  ctx.fill();
+  ctx.restore();
+}
+function arcTail(cx, cy, r, a0, a1){
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, a0, a1, false);
+}
+
+/* ====================== Round Control ====================== */
+function spawnRound() {
+  state = STATE.WAITING;
+  desiredBowlCount = 0;
+  updateHUD();
+
+  const count = randi(1,5);
+  const laneGap = Math.min(120, L.h / (count + 1));
+  const lanes = new Array(count).fill(0).map((_,i)=> L.y + laneGap*(i+1));
+  puppies = [];
+  for (let i=0;i<count;i++){
+    puppies.push(new Puppy(i, lanes));
+  }
+
+  const bowlGap = Math.min(120, R.h / 6);
+  const bowlLanes = new Array(5).fill(0).map((_,i)=> R.y + bowlGap*(i+1));
+  bowls = [];
+  for (let i=0;i<5;i++){
+    bowls.push(new Bowl(R.x + Math.floor(R.w*0.55), bowlLanes[i]));
+  }
+}
+spawnRound();
+
+function assignTargets() {
+  const visibleBowls = getVisibleBowls();
+  visibleBowls.forEach((b,i)=>b.resetFood());
+  for (let i=0;i<puppies.length;i++){
+    const b = visibleBowls[i];
+    if (b) puppies[i].setTargetForBowl(b);
+  }
+}
+function getVisibleBowls(){ return bowls.slice(0, desiredBowlCount); }
+
+function resetAfterHappy() { spawnRound(); }
+
+/* ====================== Input ====================== */
+function isRightHalf(x){ return x >= L.w; }
+function handlePress(x, y){
+  ensureAudioCtx(); // unlock audio on first gesture
+  if (!isLandscape()) return;
+  if (isRightHalf(x)) {
+    desiredBowlCount = (desiredBowlCount + 1) % 6;
+    updateHUD();
+  } else {
+    if (state === STATE.WAITING && desiredBowlCount === puppies.length) {
+      state = STATE.TURNING;
+      assignTargets();
+      turningTimer = 0;
+      updateHUD();
+    }
+  }
+}
+let turningTimer = 0, eatingTimer = 0, happyTimer = 0;
+
+canvas.addEventListener('pointerdown', (e)=>{
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  handlePress(x, y);
+}, {passive:false});
+
+function isLandscape(){ return window.innerWidth >= window.innerHeight; }
+
+/* ====================== HUD ====================== */
+function updateHUD(){
+  rightLabel.textContent = `🍲 RIGHT to set bowls: ${desiredBowlCount}`;
+  const msg = (state===STATE.WAITING)
+    ? '🐶 Tap LEFT when ready'
+    : (state===STATE.TURNING?'🐶 Puppies are turning…'
+    : state===STATE.FROLIC?'🐶 Frolicking!'
+    : state===STATE.EATING?'🐶 Munch munch…'
+    : '🐶 So happy!');
+  leftLabel.textContent = msg;
+}
+
+/* ====================== Main Loop ====================== */
+let bgCloudT = 0;
+function step(ts){
+  dt = Math.min(0.033, Math.max(0.001, (ts - lastTs)/1000));
+  lastTs = ts; time += dt;
+
+  // Clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Background
+  drawBackground();
+
+  // State machine
+  if (state === STATE.TURNING) {
+    turningTimer += dt;
+    puppies.forEach(p=>p.update(dt, STATE.TURNING));
+    if (turningTimer > 0.4) { state = STATE.FROLIC; updateHUD(); }
+  } else if (state === STATE.FROLIC) {
+    let allAtTarget = true;
+    puppies.forEach(p=>{
+      p.update(dt, STATE.FROLIC);
+      if (!p.eating) allAtTarget = false;
+    });
+    if (allAtTarget) { state = STATE.EATING; eatingTimer = 0; updateHUD(); }
+  } else if (state === STATE.EATING) {
+    eatingTimer += dt;
+    puppies.forEach(p=>p.update(dt, STATE.EATING));
+    const vis = getVisibleBowls();
+    const rate = 0.18;
+    vis.forEach(b=>{
+      b.food = Math.max(0, b.food - rate * dt);
+    });
+    if (vis.every(b=>b.food<=0.02) || eatingTimer>7) {
+      state = STATE.HAPPY;
+      happyTimer = 0;
+      puppies.forEach(p=>{ p.eating=false; });
+      updateHUD();
+    }
+  } else if (state === STATE.HAPPY) {
+    happyTimer += dt;
+    puppies.forEach(p=>p.update(dt, STATE.HAPPY));
+    if (happyTimer > 1.6) { resetAfterHappy(); updateHUD(); }
+  } else {
+    puppies.forEach(p=>p.update(dt, STATE.WAITING));
+  }
+
+  // Bowls then Puppies
+  bowls.forEach((b,i)=>{ if (i < desiredBowlCount) b.draw(); });
+  puppies.forEach(p=>p.draw());
+
+  requestAnimationFrame(step);
+}
+requestAnimationFrame(step);
+
+/* ====================== Background / Decor ====================== */
+function drawBackground(){
+  const W = window.innerWidth, H = window.innerHeight;
+  // sky gradient
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, '#f4fbff');
+  g.addColorStop(1, '#e8f6ff');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  // subtle moving clouds
+  bgCloudT += dt*8;
+  ctx.globalAlpha = 0.15;
+  for (let i=0;i<4;i++){
+    const cx = (i*200 + (bgCloudT*20)% (W+240)) - 120;
+    const cy = 60 + i*28;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 60, 20, 0, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+30, cy+8, 50, 18, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx-30, cy+12, 46, 16, 0, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // gentle ground stripes
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#e0f2ff';
+  for (let i=0;i<8;i++){
+    const y = Math.floor((i+1) * H/9);
+    ctx.fillRect(0, y, W, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // midline separator
+  ctx.fillStyle = '#cfe7fb';
+  ctx.fillRect(L.w-1, 0, 2, H);
+
+  // labels
+  ctx.fillStyle = '#2a476b';
+  ctx.font = '700 16px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('PUPPIES', L.w/2, 24);
+  ctx.fillText('BOWLS', L.w + R.w/2, 24);
+}
+
+/* ====================== Notes ======================
+- Uses WebAudio for squeaky barks; requires first user interaction to unlock audio (handled).
+- Mute button toggles sound without blocking gameplay.
+- No external libraries; everything is vector/Canvas and JS.
+===================================================== */
+</script>
+</body>
+</html>
